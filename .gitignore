@@ -1,0 +1,13 @@
+# Wi-Fi credentials (never commit)
+firmware/**/secrets.h
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.env.local
+frontend/.env.*.local
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
