@@ -4,7 +4,15 @@
 // =====================================================
 // 4-MIC SOUND DIRECTION DETECTION
 // ESP32-WROOM-32 + 4 MAX9814 + SG90 SERVO
-// PUSH BUTTON: START / RECALIBRATE
+//
+// BUTTON:
+// SHORT PRESS = PAUSE / RESUME
+// LONG PRESS  = RECALIBRATE
+//
+// LED 1 (GREEN)  = SYSTEM RUNNING
+// LED 2 (YELLOW) = DIRECTION DETECTED / PAUSED
+//
+// AUTOMATIC STARTUP CALIBRATION
 // AMPLITUDE-BASED LOCALIZATION (NOT TDOA)
 // =====================================================
 
@@ -15,6 +23,9 @@ const int micPins[4] = {32, 33, 34, 35};
 
 const int SERVO_PIN = 18;
 const int BUTTON_PIN = 27;
+
+const int LED_SYSTEM = 25;
+const int LED_DIRECTION = 26;
 
 const float micAngles[4] = {
   0.0, 60.0, 120.0, 180.0
@@ -49,19 +60,34 @@ const int SERVO_MIN_ANGLE = 10;
 const int SERVO_MAX_ANGLE = 170;
 
 
-// ---------------- BUTTON ----------------
+// ---------------- BUTTON SETTINGS ----------------
 
 const unsigned long DEBOUNCE_MS = 50;
+const unsigned long LONG_PRESS_MS = 2000;
 
 bool lastButtonReading = HIGH;
 bool stableButtonState = HIGH;
 
 unsigned long lastDebounceTime = 0;
+unsigned long buttonPressStart = 0;
+unsigned long lastButtonUpdateTime = 0;
+
+bool longPressHandled = false;
+
+
+// ---------------- BUTTON EVENTS ----------------
+
+enum ButtonEvent {
+  NO_EVENT,
+  SHORT_PRESS,
+  LONG_PRESS
+};
 
 
 // ---------------- SYSTEM STATE ----------------
 
 bool systemStarted = false;
+bool systemPaused = false;
 
 Servo directionServo;
 
@@ -80,6 +106,40 @@ int noiseFloor[4] = {0, 0, 0, 0};
 int soundThreshold[4] = {0, 0, 0, 0};
 
 int lastStrongestMic = 0;
+
+
+// =====================================================
+// LED CONTROL
+// =====================================================
+
+void updateLEDs() {
+
+  if (!systemStarted) {
+
+    // Calibration / startup
+    digitalWrite(LED_SYSTEM, HIGH);
+    digitalWrite(LED_DIRECTION, LOW);
+
+    return;
+
+  }
+
+  if (systemPaused) {
+
+    // Paused: servo holds last direction
+    digitalWrite(LED_SYSTEM, LOW);
+    digitalWrite(LED_DIRECTION, HIGH);
+
+    return;
+
+  }
+
+  // System is active and listening
+  digitalWrite(LED_SYSTEM, HIGH);
+
+  // Yellow LED reflects the last detection state.
+  // Its state is updated during sound processing.
+}
 
 
 // =====================================================
@@ -140,10 +200,31 @@ void emitTelemetry(
 
 
 // =====================================================
-// PUSH BUTTON WITH DEBOUNCING
+// BUTTON STATE RESET
 // =====================================================
 
-bool buttonPressed() {
+void resetButtonState() {
+
+  lastButtonReading = digitalRead(BUTTON_PIN);
+  stableButtonState = lastButtonReading;
+
+  lastDebounceTime = millis();
+  buttonPressStart = millis();
+  lastButtonUpdateTime = buttonPressStart;
+
+  // Ignore a button already held during calibration.
+  longPressHandled = (stableButtonState == LOW);
+
+}
+
+
+// =====================================================
+// BUTTON WITH DEBOUNCING
+// SHORT PRESS = PAUSE / RESUME
+// LONG PRESS = RECALIBRATE
+// =====================================================
+
+ButtonEvent checkButton() {
 
   bool reading = digitalRead(BUTTON_PIN);
 
@@ -151,21 +232,53 @@ bool buttonPressed() {
 
     lastDebounceTime = millis();
 
+    lastButtonReading = reading;
+
   }
 
-  if (millis() - lastDebounceTime > DEBOUNCE_MS) {
+  if (millis() - lastDebounceTime >= DEBOUNCE_MS) {
 
     if (reading != stableButtonState) {
 
       stableButtonState = reading;
 
-      // INPUT_PULLUP: LOW means button pressed
+      // BUTTON PRESSED
 
       if (stableButtonState == LOW) {
 
-        lastButtonReading = reading;
+        buttonPressStart = millis();
+        lastButtonUpdateTime = buttonPressStart;
 
-        return true;
+        longPressHandled = false;
+
+        Serial.println(
+          "{\"event\":\"button_pressed\",\"durationMs\":0,\"holdProgress\":0}"
+        );
+
+      }
+
+      // BUTTON RELEASED
+
+      else {
+
+        unsigned long pressDuration = millis() - buttonPressStart;
+
+        int holdProgress = min(
+          100UL,
+          (pressDuration * 100UL) / LONG_PRESS_MS
+        );
+
+        Serial.printf(
+          "{\"event\":\"button_released\",\"durationMs\":%lu,\"holdProgress\":%d}\n",
+          pressDuration,
+          holdProgress
+        );
+
+        if (!longPressHandled) {
+
+          return SHORT_PRESS;
+
+        }
 
       }
 
@@ -173,9 +286,47 @@ bool buttonPressed() {
 
   }
 
-  lastButtonReading = reading;
+  // BUTTON HOLD TELEMETRY
 
-  return false;
+  if (
+    stableButtonState == LOW &&
+    !longPressHandled &&
+    millis() - lastButtonUpdateTime >= 100
+  ) {
+
+    lastButtonUpdateTime = millis();
+
+    unsigned long pressDuration =
+      lastButtonUpdateTime - buttonPressStart;
+
+    int holdProgress = min(
+      100UL,
+      (pressDuration * 100UL) / LONG_PRESS_MS
+    );
+
+    Serial.printf(
+      "{\"event\":\"button_hold\",\"durationMs\":%lu,\"holdProgress\":%d}\n",
+      pressDuration,
+      holdProgress
+    );
+
+  }
+
+  // LONG PRESS DETECTION
+
+  if (
+    stableButtonState == LOW &&
+    !longPressHandled &&
+    millis() - buttonPressStart >= LONG_PRESS_MS
+  ) {
+
+    longPressHandled = true;
+
+    return LONG_PRESS;
+
+  }
+
+  return NO_EVENT;
 
 }
 
@@ -426,23 +577,79 @@ void startCalibration() {
 
   systemStarted = false;
 
+  systemPaused = false;
+
   consecutiveDetections = 0;
 
   hasPreviousEstimate = false;
 
-  smoothedEstimatedAngle = 90.0;
+  // LED STATUS DURING CALIBRATION
+
+  digitalWrite(LED_SYSTEM, HIGH);
+  digitalWrite(LED_DIRECTION, LOW);
+
+  // Keep servo at its existing physical position.
 
   Serial.println(
-    "{\"event\":\"calibration_started\"}"
+    "{\"event\":\"recalibration_started\"}"
   );
 
   calibrateNoise();
 
   systemStarted = true;
 
+  resetButtonState();
+
+  updateLEDs();
+
   Serial.println(
     "{\"event\":\"system_started\"}"
   );
+
+}
+
+
+// =====================================================
+// HANDLE BUTTON ACTIONS
+// =====================================================
+
+void handleShortPress() {
+
+  systemPaused = !systemPaused;
+
+  if (systemPaused) {
+
+    consecutiveDetections = 0;
+
+    // GREEN OFF, YELLOW ON
+
+    digitalWrite(LED_SYSTEM, LOW);
+    digitalWrite(LED_DIRECTION, HIGH);
+
+    Serial.printf(
+      "{\"event\":\"paused\",\"servoAngle\":%d}\n",
+      currentServoAngle
+    );
+
+  }
+
+  else {
+
+    consecutiveDetections = 0;
+
+    hasPreviousEstimate = false;
+
+    // GREEN ON, YELLOW OFF
+
+    digitalWrite(LED_SYSTEM, HIGH);
+    digitalWrite(LED_DIRECTION, LOW);
+
+    Serial.printf(
+      "{\"event\":\"resumed\",\"servoAngle\":%d}\n",
+      currentServoAngle
+    );
+
+  }
 
 }
 
@@ -477,6 +684,16 @@ void setup() {
     INPUT_PULLUP
   );
 
+  resetButtonState();
+
+  // LED SETUP
+
+  pinMode(LED_SYSTEM, OUTPUT);
+  pinMode(LED_DIRECTION, OUTPUT);
+
+  digitalWrite(LED_SYSTEM, HIGH);
+  digitalWrite(LED_DIRECTION, LOW);
+
   // SERVO SETUP
 
   directionServo.setPeriodHertz(50);
@@ -494,8 +711,12 @@ void setup() {
   delay(1000);
 
   Serial.println(
-    "{\"event\":\"system_ready\",\"message\":\"Press button to start calibration\"}"
+    "{\"event\":\"system_ready\",\"message\":\"Automatic calibration starting\"}"
   );
+
+  // AUTOMATIC CALIBRATION ON POWER ON
+
+  startCalibration();
 
 }
 
@@ -510,19 +731,45 @@ void loop() {
   // CHECK BUTTON
   // -----------------------------------
 
-  if (buttonPressed()) {
+  ButtonEvent event = checkButton();
+
+  if (event == LONG_PRESS) {
 
     Serial.println(
-      "{\"event\":\"button_pressed\"}"
+      "{\"event\":\"button_long_press\"}"
     );
 
     startCalibration();
+
+    return;
+
+  }
+
+  if (event == SHORT_PRESS) {
+
+    handleShortPress();
 
   }
 
 
   // -----------------------------------
-  // WAIT FOR FIRST BUTTON PRESS
+  // PAUSED STATE
+  // -----------------------------------
+
+  if (systemPaused) {
+
+    // Servo remains at its last position.
+    // Green OFF, Yellow ON.
+
+    delay(5);
+
+    return;
+
+  }
+
+
+  // -----------------------------------
+  // SYSTEM NOT STARTED
   // -----------------------------------
 
   if (!systemStarted) {
@@ -560,13 +807,25 @@ void loop() {
 
     // CHECK BUTTON DURING LISTENING
 
-    if (buttonPressed()) {
+    event = checkButton();
+
+    if (event == LONG_PRESS) {
 
       Serial.println(
-        "{\"event\":\"button_pressed\"}"
+        "{\"event\":\"button_long_press\"}"
       );
 
       startCalibration();
+
+      return;
+
+    }
+
+    if (event == SHORT_PRESS) {
+
+      handleShortPress();
+
+      // Stop listening immediately.
 
       return;
 
@@ -602,6 +861,10 @@ void loop() {
 
     consecutiveDetections = 0;
 
+    // No direction detected: Yellow OFF
+
+    digitalWrite(LED_DIRECTION, LOW);
+
     emitTelemetry(
       "no_sound",
       average,
@@ -621,6 +884,10 @@ void loop() {
   // -----------------------------------
 
   if (consecutiveDetections < REQUIRED_DETECTIONS) {
+
+    // Sound direction is being confirmed.
+
+    digitalWrite(LED_DIRECTION, HIGH);
 
     emitTelemetry(
       "confirming",
@@ -646,7 +913,9 @@ void loop() {
 
     hasPreviousEstimate = true;
 
-  } else {
+  }
+
+  else {
 
     smoothedEstimatedAngle =
 
@@ -682,6 +951,14 @@ void loop() {
     currentServoAngle = targetAngle;
 
   }
+
+
+  // -----------------------------------
+  // DIRECTION DETECTED: YELLOW ON
+  // -----------------------------------
+
+  digitalWrite(LED_SYSTEM, HIGH);
+  digitalWrite(LED_DIRECTION, HIGH);
 
 
   // -----------------------------------

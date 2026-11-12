@@ -64,6 +64,9 @@
     .panel-heading p { margin: 5px 0 0; color: var(--muted); font-size: 11px; }
     .live-tag { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .13em; }
     .live-tag::before { width: 6px; height: 6px; border-radius: 50%; background: var(--cyan); content: ""; }
+    .live-tag.paused { color: #ffd27b; }
+    .live-tag.paused::before { background: #ffd27b; }
+    .live-tag.calibrating { color: var(--cyan); }
     .radar-wrap { position: relative; width: 100%; height: clamp(245px, 34vw, 335px); margin-top: 10px; }
     #radar { display: block; width: 100%; height: 100%; }
     .radar-center { position: absolute; bottom: 1px; left: 50%; width: 30px; height: 30px; transform: translateX(-50%); }
@@ -110,6 +113,22 @@
     .hint strong { color: #bdd2d8; font-weight: 600; }
     .error { display: none; margin-top: 12px; color: #ff9a8f; font-size: 11px; line-height: 1.5; }
     .error.visible { display: block; }
+    .controls-panel { margin-top: 17px; padding: 18px 21px; }
+    .controls-content { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin-top: 15px; }
+    .button-feedback { display: flex; align-items: center; gap: 13px; margin-top: 15px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 11px; background: rgba(13, 28, 42, .55); }
+    .button-feedback.pressed { border-color: rgba(73, 225, 208, .42); background: rgba(73, 225, 208, .06); }
+    .button-indicator { width: 10px; height: 10px; flex: 0 0 10px; border: 1px solid #718894; border-radius: 50%; background: #344a55; }
+    .button-feedback.pressed .button-indicator { border-color: var(--lime); background: var(--lime); box-shadow: 0 0 12px rgba(201, 243, 107, .75); }
+    .button-feedback-copy { flex: 1; min-width: 0; }
+    .button-feedback-title { color: #cfdbdf; font-size: 11px; font-weight: 650; }
+    .button-feedback-subtitle { margin-top: 4px; color: var(--muted); font-size: 10px; }
+    .button-progress-track { width: min(190px, 30%); height: 5px; overflow: hidden; border-radius: 5px; background: #203743; }
+    .button-progress-fill { width: 0; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--cyan), var(--lime)); transition: width .1s linear; }
+    .button-progress-label { width: 41px; color: var(--cyan); font-size: 10px; text-align: right; font-variant-numeric: tabular-nums; }
+    .control-item { display: flex; align-items: flex-start; gap: 11px; padding: 12px; border: 1px solid var(--line); border-radius: 11px; background: rgba(13, 28, 42, .55); }
+    .control-key { display: grid; flex: 0 0 35px; height: 35px; place-items: center; border: 1px solid rgba(73, 225, 208, .22); border-radius: 9px; color: var(--cyan); background: rgba(73, 225, 208, .07); font-size: 10px; font-weight: 750; }
+    .control-title { color: #cfdbdf; font-size: 11px; font-weight: 650; }
+    .control-description { margin-top: 4px; color: var(--muted); font-size: 10px; line-height: 1.5; }
 
     @media (max-width: 760px) {
       .shell { width: min(100% - 24px, 550px); padding-top: 22px; }
@@ -120,6 +139,10 @@
       .mic-list { gap: 11px; margin-top: 14px; }
       .calibration { gap: 8px; padding: 10px; }
       .progress-track { width: 48px; }
+      .controls-content { grid-template-columns: 1fr; gap: 8px; }
+      .controls-panel { padding: 17px; }
+      .button-feedback { gap: 9px; padding: 10px; }
+      .button-progress-track { width: 22%; }
     }
     @media (max-width: 480px) {
       .topbar { align-items: flex-start; }
@@ -160,7 +183,7 @@
             <h2>Direction monitor</h2>
             <p>Live bearing across the front hemisphere</p>
           </div>
-          <span class="live-tag">Live view</span>
+          <span id="systemStateTag" class="live-tag">Waiting</span>
         </div>
         <div class="radar-wrap"><canvas id="radar" aria-label="Semicircular radar showing sound direction"></canvas><span class="radar-center" aria-hidden="true"></span></div>
         <div class="bearing-caption"><span>LEFT · 0°</span><span>FRONT · 90°</span><span>RIGHT · 180°</span></div>
@@ -198,7 +221,36 @@
       </div>
     </div>
 
-    <p class="hint"><strong>To connect:</strong> use Chrome or Edge, close Arduino Serial Monitor, then select the ESP32 serial port. Keep the microphone order matched to the physical left-to-right arrangement in the sketch.</p>
+    <section class="panel controls-panel" aria-label="Hardware button controls">
+      <div class="panel-heading">
+        <div><h2>Hardware controls</h2><p>Actions supported by the ESP32 sketch</p></div>
+      </div>
+      <div id="buttonFeedback" class="button-feedback" role="status" aria-live="polite">
+        <span class="button-indicator" aria-hidden="true"></span>
+        <div class="button-feedback-copy">
+          <div id="buttonFeedbackTitle" class="button-feedback-title">Waiting for a button press</div>
+          <div id="buttonFeedbackSubtitle" class="button-feedback-subtitle">Live button state appears here when the ESP32 is connected</div>
+        </div>
+        <div class="button-progress-track" aria-hidden="true"><div id="buttonProgressFill" class="button-progress-fill"></div></div>
+        <div id="buttonProgressLabel" class="button-progress-label">0 / 2 s</div>
+      </div>
+      <div class="controls-content">
+        <div class="control-item">
+          <span class="control-key">SHORT</span>
+          <div><div class="control-title">Pause or resume</div><div class="control-description">Tap the button to pause sound detection or resume listening. The servo holds its last position while paused.</div></div>
+        </div>
+        <div class="control-item">
+          <span class="control-key">2 SEC</span>
+          <div><div class="control-title">Recalibrate</div><div class="control-description">Press and hold for 2 seconds to recalibrate the microphones. Keep normal room noise during calibration.</div></div>
+        </div>
+        <div class="control-item">
+          <span class="control-key">GPIO 27</span>
+          <div><div class="control-title">Button wiring</div><div class="control-description">The sketch uses INPUT_PULLUP: connect the push button between GPIO 27 and GND.</div></div>
+        </div>
+      </div>
+    </section>
+
+    <p class="hint"><strong>To connect:</strong> use Chrome or Edge, close Arduino Serial Monitor, then select the ESP32 serial port. The sketch maps Mic 1 to 0° (left), Mic 2 to 60°, Mic 3 to 120°, and Mic 4 to 180° (right).</p>
   </main>
 
   <script>
@@ -217,6 +269,10 @@
     const connectionLed = document.getElementById("connectionLed");
     const connectionText = document.getElementById("connectionText");
     const errorMessage = document.getElementById("errorMessage");
+    const systemStateTag = document.getElementById("systemStateTag");
+    const buttonFeedback = document.getElementById("buttonFeedback");
+    let buttonFeedbackTimer = null;
+    let buttonLongPressActive = false;
     let activePort = null;
     let activeReader = null;
     let lastAngle = null;
@@ -337,16 +393,107 @@
       status.querySelector(".led").classList.toggle("online", active);
     }
 
+    function setSystemState(text, state = "idle") {
+      systemStateTag.textContent = text;
+      systemStateTag.classList.toggle("paused", state === "paused");
+      systemStateTag.classList.toggle("calibrating", state === "calibrating");
+    }
+
+    function setCalibrationProgress(progress, title, subtitle) {
+      const boundedProgress = Math.max(0, Math.min(100, Number(progress) || 0));
+      document.getElementById("progressFill").style.width = `${boundedProgress}%`;
+      document.getElementById("calibrationPercent").textContent = `${boundedProgress}%`;
+      document.getElementById("calibrationTitle").textContent = title;
+      document.getElementById("calibrationSubtitle").textContent = subtitle;
+    }
+
+    function updateButtonFeedback(progress, title, subtitle, pressed) {
+      const boundedProgress = Math.max(0, Math.min(100, Number(progress) || 0));
+      window.clearTimeout(buttonFeedbackTimer);
+      buttonFeedback.classList.toggle("pressed", pressed);
+      document.getElementById("buttonProgressFill").style.width = `${boundedProgress}%`;
+      document.getElementById("buttonProgressLabel").textContent = `${(boundedProgress * 2 / 100).toFixed(1)} / 2 s`;
+      document.getElementById("buttonFeedbackTitle").textContent = title;
+      document.getElementById("buttonFeedbackSubtitle").textContent = subtitle;
+    }
+
     function handleTelemetry(message) {
       if (!message || typeof message !== "object") return;
+      if (message.event === "button_pressed") {
+        buttonLongPressActive = false;
+        updateButtonFeedback(0, "Button pressed", "Keep holding for 2 seconds to start recalibration", true);
+        return;
+      }
+      if (message.event === "button_hold") {
+        const progress = Number(message.holdProgress) || 0;
+        const heldSeconds = Math.max(0, Number(message.durationMs) || 0) / 1000;
+        updateButtonFeedback(
+          progress,
+          `Button held · ${Math.min(2, heldSeconds).toFixed(1)} / 2.0 s`,
+          progress >= 100 ? "Recalibration starting" : "Keep holding to recalibrate; release sooner to pause or resume",
+          true
+        );
+        return;
+      }
+      if (message.event === "button_released") {
+        const heldSeconds = Math.max(0, Number(message.durationMs) || 0) / 1000;
+        const wasLongPress = buttonLongPressActive || heldSeconds >= 2;
+        buttonLongPressActive = false;
+        updateButtonFeedback(
+          wasLongPress ? 100 : message.holdProgress,
+          "Button released",
+          wasLongPress ? "Recalibration is in progress" : "Updating listening state",
+          false
+        );
+        buttonFeedbackTimer = window.setTimeout(() => {
+          updateButtonFeedback(0, "Waiting for a button press", "Tap to pause or resume; hold for 2 seconds to recalibrate", false);
+        }, 1800);
+        return;
+      }
+      if (message.event === "system_ready") {
+        setSystemState("Starting");
+        setDirectionStatus("Starting automatic calibration");
+        return;
+      }
+      if (message.event === "calibration_started" || message.event === "recalibration_started" || message.event === "button_long_press") {
+        if (message.event === "button_long_press") {
+          buttonLongPressActive = true;
+          updateButtonFeedback(100, "Long press detected · recalibrating", "Keep normal room noise while the microphones recalibrate", true);
+        }
+        setSystemState("Calibrating", "calibrating");
+        setCalibrationProgress(0, "Calibrating microphones", "Keep normal room noise; avoid loud test sounds");
+        setDirectionStatus(message.event === "button_long_press" ? "Recalibration requested" : "Calibrating background noise");
+        return;
+      }
       if (message.event === "calibration") {
         const progress = Math.max(0, Math.min(100, Number(message.progress) || 0));
-        const calibrationComplete = progress >= 100;
-        document.getElementById("progressFill").style.width = `${progress}%`;
-        document.getElementById("calibrationPercent").textContent = `${progress}%`;
-        document.getElementById("calibrationTitle").textContent = calibrationComplete ? "Calibration complete" : "Calibrating microphones";
-        document.getElementById("calibrationSubtitle").textContent = calibrationComplete ? "Listening for sound direction" : "Keep normal room noise; avoid loud test sounds";
-        if (!calibrationComplete) setDirectionStatus("Calibrating background noise");
+        setSystemState(progress >= 100 ? "Starting" : "Calibrating", progress >= 100 ? "idle" : "calibrating");
+        setCalibrationProgress(
+          progress,
+          progress >= 100 ? "Calibration complete" : "Calibrating microphones",
+          progress >= 100 ? "Starting sound detection" : "Keep normal room noise; avoid loud test sounds"
+        );
+        if (progress < 100) setDirectionStatus("Calibrating background noise");
+        return;
+      }
+      if (message.event === "calibration_complete") {
+        setCalibrationProgress(100, "Calibration complete", "Starting sound detection");
+        setSystemState("Starting");
+        return;
+      }
+      if (message.event === "system_started") {
+        setSystemState("Listening");
+        setDirectionStatus("Listening for sound");
+        return;
+      }
+      if (message.event === "paused" || message.event === "resumed") {
+        if (Number.isFinite(message.servoAngle)) {
+          document.getElementById("servoAngle").textContent = `${Math.round(message.servoAngle)}°`;
+        }
+        const paused = message.event === "paused";
+        setSystemState(paused ? "Paused" : "Listening", paused ? "paused" : "idle");
+        setDirectionStatus(paused ? "Detection paused · servo holding" : "Listening for sound");
+        document.getElementById("holdNote").textContent = paused ? "Servo holds its last position while paused" : "Waiting for the next sound";
         return;
       }
 
@@ -361,6 +508,7 @@
       }
 
       if (message.event === "detected" || message.event === "confirming") {
+        setSystemState("Listening");
         const bearing = Number(message.angle);
         if (Number.isFinite(bearing)) {
           lastAngle = Math.max(0, Math.min(180, bearing));
@@ -375,6 +523,7 @@
           document.getElementById("holdNote").textContent = `Bearing held at ${lastAngle.toFixed(1)}° between detections`;
         }
       } else if (message.event === "no_sound") {
+        setSystemState("Listening");
         setDirectionStatus("No qualifying sound");
         document.getElementById("holdNote").textContent = lastAngle === null ? "Waiting for the first sound" : `Last bearing held at ${lastAngle.toFixed(1)}°`;
       }
@@ -414,7 +563,9 @@
             showError(`Could not close the serial port: ${error.message}`);
           }
           setConnection(false);
+          setSystemState("Disconnected");
           setDirectionStatus("Device disconnected");
+          updateButtonFeedback(0, "Waiting for a button press", "Connect the ESP32 to see live button updates", false);
         }
       }
     }
@@ -436,6 +587,7 @@
         activePort = port;
         activeReader = port.readable.getReader();
         setConnection(true);
+        setSystemState("Connected");
         setDirectionStatus("Waiting for ESP32 telemetry");
         readSerial(port, activeReader);
       } catch (error) {
