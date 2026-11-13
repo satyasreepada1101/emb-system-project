@@ -5,14 +5,21 @@
 // 4-MIC SOUND DIRECTION DETECTION
 // ESP32-WROOM-32 + 4 MAX9814 + SG90 SERVO
 //
+// IMPROVED LOGIC:
+// 1. Individual noise calibration
+// 2. Normalized microphone strength
+// 3. Weighted angle estimation
+// 4. Adjacent microphone interpolation
+// 5. Endpoint handling
+// 6. Adaptive smoothing
+//
 // BUTTON:
 // SHORT PRESS = PAUSE / RESUME
 // LONG PRESS  = RECALIBRATE
 //
-// LED 1 (GREEN)  = SYSTEM RUNNING
-// LED 2 (YELLOW) = DIRECTION DETECTED / PAUSED
+// GREEN LED  = SYSTEM ACTIVE
+// YELLOW LED = SOUND DETECTED / PAUSED
 //
-// AUTOMATIC STARTUP CALIBRATION
 // AMPLITUDE-BASED LOCALIZATION (NOT TDOA)
 // =====================================================
 
@@ -36,31 +43,56 @@ const float micAngles[4] = {
 
 const unsigned long CALIBRATION_MS = 30000;
 const unsigned long WINDOW_MS = 20;
+const int NUM_WINDOWS = 150;
 
 const int MIN_THRESHOLD = 180;
 const int MIN_NOISE_MARGIN = 100;
+
 const float NOISE_MULTIPLIER = 1.35;
+
+
+// ---------------- MICROPHONE CORRECTION ----------------
+
+// Initially equal. Tune after testing all microphones.
+
+float micGain[4] = {
+  1.0, 1.0, 1.0, 1.0
+};
 
 
 // ---------------- LISTENING ----------------
 
-const unsigned long LISTEN_MS = 500;
+const unsigned long LISTEN_MS = 600;
 
 
-// ---------------- STABILITY ----------------
+// ---------------- DETECTION ----------------
 
-const float SMOOTHING_FACTOR = 0.35;
-const float MIN_ANGLE_CHANGE = 5.0;
+const float MIN_DETECTION_STRENGTH = 40.0;
+
+const float NEIGHBOUR_MIN_RATIO = 0.12;
+
+const float ENDPOINT_DOMINANCE_RATIO = 1.20;
+
 const int REQUIRED_DETECTIONS = 2;
 
 
-// ---------------- SERVO LIMITS ----------------
+// ---------------- SMOOTHING ----------------
+
+const float SMOOTHING_NORMAL = 0.35;
+const float SMOOTHING_FAST = 0.75;
+
+const float FAST_CHANGE_ANGLE = 25.0;
+
+const float MIN_ANGLE_CHANGE = 3.0;
+
+
+// ---------------- SERVO ----------------
 
 const int SERVO_MIN_ANGLE = 10;
 const int SERVO_MAX_ANGLE = 170;
 
 
-// ---------------- BUTTON SETTINGS ----------------
+// ---------------- BUTTON ----------------
 
 const unsigned long DEBOUNCE_MS = 50;
 const unsigned long LONG_PRESS_MS = 2000;
@@ -75,10 +107,9 @@ unsigned long lastButtonUpdateTime = 0;
 bool longPressHandled = false;
 
 
-// ---------------- BUTTON EVENTS ----------------
-
 enum ButtonEvent {
   NO_EVENT,
+  SHORT_PRESS,
   LONG_PRESS
 };
 
@@ -86,6 +117,8 @@ enum ButtonEvent {
 // ---------------- SYSTEM STATE ----------------
 
 bool systemStarted = false;
+bool systemPaused = false;
+bool directionDetected = false;
 
 Servo directionServo;
 
@@ -97,13 +130,13 @@ bool hasPreviousEstimate = false;
 
 int consecutiveDetections = 0;
 
+int lastStrongestMic = 0;
 
-// ---------------- MIC CALIBRATION ----------------
+
+// ---------------- CALIBRATION DATA ----------------
 
 int noiseFloor[4] = {0, 0, 0, 0};
 int soundThreshold[4] = {0, 0, 0, 0};
-
-int lastStrongestMic = 0;
 
 
 // =====================================================
@@ -112,26 +145,25 @@ int lastStrongestMic = 0;
 
 void updateLEDs() {
 
+  digitalWrite(LED_SYSTEM, HIGH);
+
   if (!systemStarted) {
 
-    // Calibration / startup
-    digitalWrite(LED_SYSTEM, HIGH);
     digitalWrite(LED_DIRECTION, LOW);
-
     return;
 
   }
 
-  // System is active and listening
-  digitalWrite(LED_SYSTEM, HIGH);
+  digitalWrite(
+    LED_DIRECTION,
+    (systemPaused || directionDetected) ? HIGH : LOW
+  );
 
-  // Yellow LED reflects the last detection state.
-  // Its state is updated during sound processing.
 }
 
 
 // =====================================================
-// SERIAL JSON OUTPUT
+// TELEMETRY
 // =====================================================
 
 void emitCalibration(int progress) {
@@ -148,14 +180,17 @@ void emitTelemetry(
   const char *event,
   const int activity[4],
   bool hasAngle,
-  float angle
+  float angle,
+  const float strength[4]
 ) {
 
   Serial.printf(
-    "{\"event\":\"%s\",\"detected\":%s,\"strongestMic\":%d,"
-    "\"angle\":",
+    "{\"event\":\"%s\",\"detected\":%s,"
+    "\"paused\":%s,\"strongestMic\":%d,\"angle\":",
+
     event,
     hasAngle ? "true" : "false",
+    systemPaused ? "true" : "false",
     lastStrongestMic
   );
 
@@ -166,29 +201,34 @@ void emitTelemetry(
   }
 
   Serial.printf(
-    ",\"smoothedAngle\":%.1f,\"servoAngle\":%d,"
+    ",\"smoothedAngle\":%.1f,"
+    "\"servoAngle\":%d,"
     "\"mics\":[%d,%d,%d,%d],"
+    "\"strength\":[%.1f,%.1f,%.1f,%.1f],"
+    "\"noiseFloor\":[%d,%d,%d,%d],"
     "\"thresholds\":[%d,%d,%d,%d]}\n",
 
     smoothedEstimatedAngle,
     currentServoAngle,
 
-    activity[0],
-    activity[1],
-    activity[2],
-    activity[3],
+    activity[0], activity[1],
+    activity[2], activity[3],
 
-    soundThreshold[0],
-    soundThreshold[1],
-    soundThreshold[2],
-    soundThreshold[3]
+    strength[0], strength[1],
+    strength[2], strength[3],
+
+    noiseFloor[0], noiseFloor[1],
+    noiseFloor[2], noiseFloor[3],
+
+    soundThreshold[0], soundThreshold[1],
+    soundThreshold[2], soundThreshold[3]
   );
 
 }
 
 
 // =====================================================
-// BUTTON STATE RESET
+// BUTTON RESET
 // =====================================================
 
 void resetButtonState() {
@@ -197,28 +237,28 @@ void resetButtonState() {
   stableButtonState = lastButtonReading;
 
   lastDebounceTime = millis();
+
   buttonPressStart = millis();
   lastButtonUpdateTime = buttonPressStart;
 
-  // Ignore a button already held during calibration.
   longPressHandled = (stableButtonState == LOW);
 
 }
 
 
 // =====================================================
-// BUTTON WITH DEBOUNCING
-// LONG PRESS = RECALIBRATE
+// BUTTON HANDLING
 // =====================================================
 
 ButtonEvent checkButton() {
 
   bool reading = digitalRead(BUTTON_PIN);
 
+  ButtonEvent event = NO_EVENT;
+
   if (reading != lastButtonReading) {
 
     lastDebounceTime = millis();
-
     lastButtonReading = reading;
 
   }
@@ -229,8 +269,6 @@ ButtonEvent checkButton() {
 
       stableButtonState = reading;
 
-      // BUTTON PRESSED
-
       if (stableButtonState == LOW) {
 
         buttonPressStart = millis();
@@ -239,35 +277,34 @@ ButtonEvent checkButton() {
         longPressHandled = false;
 
         Serial.println(
-          "{\"event\":\"button_pressed\",\"durationMs\":0,\"holdProgress\":0}"
+          "{\"event\":\"button_pressed\"}"
         );
 
-      }
+      } else {
 
-      // BUTTON RELEASED
-
-      else {
-
-        unsigned long pressDuration = millis() - buttonPressStart;
-
-        int holdProgress = min(
-          100UL,
-          (pressDuration * 100UL) / LONG_PRESS_MS
-        );
+        unsigned long duration =
+          millis() - buttonPressStart;
 
         Serial.printf(
-          "{\"event\":\"button_released\",\"durationMs\":%lu,\"holdProgress\":%d}\n",
-          pressDuration,
-          holdProgress
+          "{\"event\":\"button_released\","
+          "\"durationMs\":%lu}\n",
+          duration
         );
+
+        if (
+          !longPressHandled &&
+          duration < LONG_PRESS_MS
+        ) {
+
+          event = SHORT_PRESS;
+
+        }
 
       }
 
     }
 
   }
-
-  // BUTTON HOLD TELEMETRY
 
   if (
     stableButtonState == LOW &&
@@ -277,23 +314,22 @@ ButtonEvent checkButton() {
 
     lastButtonUpdateTime = millis();
 
-    unsigned long pressDuration =
-      lastButtonUpdateTime - buttonPressStart;
+    unsigned long duration =
+      millis() - buttonPressStart;
 
-    int holdProgress = min(
+    int progress = min(
       100UL,
-      (pressDuration * 100UL) / LONG_PRESS_MS
+      duration * 100UL / LONG_PRESS_MS
     );
 
     Serial.printf(
-      "{\"event\":\"button_hold\",\"durationMs\":%lu,\"holdProgress\":%d}\n",
-      pressDuration,
-      holdProgress
+      "{\"event\":\"button_hold\","
+      "\"durationMs\":%lu,\"holdProgress\":%d}\n",
+      duration,
+      progress
     );
 
   }
-
-  // LONG PRESS DETECTION
 
   if (
     stableButtonState == LOW &&
@@ -307,21 +343,55 @@ ButtonEvent checkButton() {
 
   }
 
-  return NO_EVENT;
+  return event;
 
 }
 
 
 // =====================================================
-// READ SOUND ACTIVITY
-// PEAK-TO-PEAK ADC VARIATION
+// PAUSE / RESUME
+// =====================================================
+
+void togglePause() {
+
+  systemPaused = !systemPaused;
+
+  directionDetected = systemPaused;
+
+  consecutiveDetections = 0;
+
+  if (systemPaused) {
+
+    Serial.println(
+      "{\"event\":\"system_paused\"}"
+    );
+
+  } else {
+
+    Serial.println(
+      "{\"event\":\"system_resumed\"}"
+    );
+
+  }
+
+  updateLEDs();
+
+}
+
+
+// =====================================================
+// READ MICROPHONE WINDOW
 // =====================================================
 
 void readSoundWindow(int activity[4]) {
 
-  int minVal[4] = {4095, 4095, 4095, 4095};
+  int minVal[4] = {
+    4095, 4095, 4095, 4095
+  };
 
-  int maxVal[4] = {0, 0, 0, 0};
+  int maxVal[4] = {
+    0, 0, 0, 0
+  };
 
   unsigned long start = millis();
 
@@ -331,11 +401,13 @@ void readSoundWindow(int activity[4]) {
 
       int value = analogRead(micPins[i]);
 
-      if (value < minVal[i])
+      if (value < minVal[i]) {
         minVal[i] = value;
+      }
 
-      if (value > maxVal[i])
+      if (value > maxVal[i]) {
         maxVal[i] = value;
+      }
 
     }
 
@@ -351,12 +423,35 @@ void readSoundWindow(int activity[4]) {
 
 
 // =====================================================
-// AUTOMATIC NOISE CALIBRATION
+// SORT CALIBRATION SAMPLES
+// =====================================================
+
+void sortSamples(int values[], int count) {
+
+  for (int i = 1; i < count; i++) {
+
+    int key = values[i];
+    int j = i - 1;
+
+    while (j >= 0 && values[j] > key) {
+
+      values[j + 1] = values[j];
+      j--;
+
+    }
+
+    values[j + 1] = key;
+
+  }
+
+}
+
+
+// =====================================================
+// CALIBRATION
 // =====================================================
 
 void calibrateNoise() {
-
-  const int NUM_WINDOWS = 150;
 
   int samples[4][NUM_WINDOWS];
 
@@ -381,43 +476,24 @@ void calibrateNoise() {
     if ((n + 1) % 5 == 0) {
 
       emitCalibration(
-        ((n + 1) * 100) / NUM_WINDOWS
+        (n + 1) * 100 / NUM_WINDOWS
       );
 
     }
 
-    delay(
-      max(
-        0L,
-        (long)(CALIBRATION_MS / NUM_WINDOWS)
-        - (long)WINDOW_MS
-      )
-    );
+    long remaining =
+      (long)(CALIBRATION_MS / NUM_WINDOWS)
+      - (long)WINDOW_MS;
+
+    if (remaining > 0) {
+      delay(remaining);
+    }
 
   }
 
-
-  // SORT VALUES AND CALCULATE MEDIAN
-
   for (int mic = 0; mic < 4; mic++) {
 
-    for (int i = 0; i < NUM_WINDOWS - 1; i++) {
-
-      for (int j = i + 1; j < NUM_WINDOWS; j++) {
-
-        if (samples[mic][j] < samples[mic][i]) {
-
-          int temp = samples[mic][i];
-
-          samples[mic][i] = samples[mic][j];
-
-          samples[mic][j] = temp;
-
-        }
-
-      }
-
-    }
+    sortSamples(samples[mic], NUM_WINDOWS);
 
     noiseFloor[mic] =
       samples[mic][NUM_WINDOWS / 2];
@@ -437,6 +513,18 @@ void calibrateNoise() {
 
   }
 
+  Serial.printf(
+    "{\"event\":\"calibration_values\","
+    "\"noiseFloor\":[%d,%d,%d,%d],"
+    "\"thresholds\":[%d,%d,%d,%d]}\n",
+
+    noiseFloor[0], noiseFloor[1],
+    noiseFloor[2], noiseFloor[3],
+
+    soundThreshold[0], soundThreshold[1],
+    soundThreshold[2], soundThreshold[3]
+  );
+
   emitCalibration(100);
 
   Serial.println(
@@ -447,42 +535,71 @@ void calibrateNoise() {
 
 
 // =====================================================
-// ESTIMATE SOUND DIRECTION
+// NORMALIZE MICROPHONE STRENGTH
+// =====================================================
+
+void calculateStrength(
+  const int activity[4],
+  float strength[4]
+) {
+
+  for (int i = 0; i < 4; i++) {
+
+    if (activity[i] <= soundThreshold[i]) {
+
+      strength[i] = 0;
+      continue;
+
+    }
+
+    strength[i] =
+      (activity[i] - soundThreshold[i]) *
+      micGain[i];
+
+  }
+
+}
+
+
+// =====================================================
+// IMPROVED DIRECTION ESTIMATION
 // =====================================================
 
 bool estimateDirection(
   const int activity[4],
-  float &angle
+  float &angle,
+  float &confidence,
+  float strength[4]
 ) {
 
-  float strength[4] = {0, 0, 0, 0};
+  calculateStrength(activity, strength);
 
   int strongest = -1;
 
-  float strongestStrength = 0;
+  float maximum = 0;
+
+  float total = 0;
 
   for (int i = 0; i < 4; i++) {
 
-    if (activity[i] > soundThreshold[i]) {
+    total += strength[i];
 
-      strength[i] =
-        activity[i] - noiseFloor[i];
+    if (strength[i] > maximum) {
 
-      if (strength[i] > strongestStrength) {
-
-        strongestStrength = strength[i];
-
-        strongest = i;
-
-      }
+      maximum = strength[i];
+      strongest = i;
 
     }
 
   }
 
-  if (strongest < 0) {
+  if (
+    strongest < 0 ||
+    maximum < MIN_DETECTION_STRENGTH
+  ) {
 
     lastStrongestMic = 0;
+    confidence = 0;
 
     return false;
 
@@ -490,62 +607,215 @@ bool estimateDirection(
 
   lastStrongestMic = strongest + 1;
 
-  angle = micAngles[strongest];
+  confidence = maximum;
 
-  // FIND STRONGER ADJACENT MICROPHONE
 
-  int neighbour = -1;
+  // -----------------------------------
+  // SINGLE MIC DOMINANCE
+  // -----------------------------------
+
+  float left = (
+    strongest > 0
+  ) ? strength[strongest - 1] : 0;
+
+  float right = (
+    strongest < 3
+  ) ? strength[strongest + 1] : 0;
+
+
+  // MIC 1 ENDPOINT
 
   if (
-    strongest > 0 &&
-    strength[strongest - 1] > 0
+    strongest == 0 &&
+    (right == 0 || maximum >=
+     right * ENDPOINT_DOMINANCE_RATIO)
   ) {
 
-    neighbour = strongest - 1;
+    angle = 0;
+    return true;
 
   }
 
+
+  // MIC 4 ENDPOINT
+
   if (
-    strongest < 3 &&
-    strength[strongest + 1] > 0
+    strongest == 3 &&
+    (left == 0 || maximum >=
+     left * ENDPOINT_DOMINANCE_RATIO)
   ) {
 
-    if (
-      neighbour < 0 ||
-      strength[strongest + 1] > strength[neighbour]
-    ) {
+    angle = 180;
+    return true;
 
-      neighbour = strongest + 1;
+  }
+
+
+  // -----------------------------------
+  // USE ONLY LOCAL NEIGHBOURS
+  // -----------------------------------
+
+  float leftWeight = 0;
+  float centerWeight = strength[strongest];
+  float rightWeight = 0;
+
+  if (strongest > 0) {
+
+    if (left >= maximum * NEIGHBOUR_MIN_RATIO) {
+
+      leftWeight = left;
 
     }
 
   }
 
-  // INTERPOLATE BETWEEN MICROPHONES
+  if (strongest < 3) {
 
-  if (neighbour >= 0) {
+    if (right >= maximum * NEIGHBOUR_MIN_RATIO) {
 
-    float a = strength[strongest];
-
-    float b = strength[neighbour];
-
-    if (a + b > 0) {
-
-      float fraction = b / (a + b);
-
-      angle += fraction *
-        (
-          micAngles[neighbour] -
-          micAngles[strongest]
-        );
+      rightWeight = right;
 
     }
 
   }
 
-  angle = constrain(angle, 0.0, 180.0);
+
+  // -----------------------------------
+  // WEIGHTED LOCAL ESTIMATION
+  // -----------------------------------
+
+  float weightedAngle =
+      centerWeight * micAngles[strongest];
+
+  float totalWeight = centerWeight;
+
+
+  if (leftWeight > 0) {
+
+    weightedAngle +=
+      leftWeight * micAngles[strongest - 1];
+
+    totalWeight += leftWeight;
+
+  }
+
+  if (rightWeight > 0) {
+
+    weightedAngle +=
+      rightWeight * micAngles[strongest + 1];
+
+    totalWeight += rightWeight;
+
+  }
+
+
+  angle = weightedAngle / totalWeight;
+
+
+  // -----------------------------------
+  // STRONGEST MIC CENTRE ANCHOR
+  // -----------------------------------
+
+  // Keep the estimate within the local
+  // region of the strongest microphone.
+
+  float lower = 0;
+  float upper = 180;
+
+  if (strongest > 0) {
+
+    lower =
+      (micAngles[strongest - 1] +
+       micAngles[strongest]) / 2.0;
+
+  }
+
+  if (strongest < 3) {
+
+    upper =
+      (micAngles[strongest] +
+       micAngles[strongest + 1]) / 2.0;
+
+  }
+
+  angle = constrain(
+    angle,
+    lower,
+    upper
+  );
 
   return true;
+
+}
+
+
+// =====================================================
+// ADAPTIVE SMOOTHING
+// =====================================================
+
+float smoothAngle(float newAngle) {
+
+  if (!hasPreviousEstimate) {
+
+    smoothedEstimatedAngle = newAngle;
+
+    hasPreviousEstimate = true;
+
+    return newAngle;
+
+  }
+
+  float difference =
+    abs(newAngle - smoothedEstimatedAngle);
+
+  float alpha = SMOOTHING_NORMAL;
+
+  if (difference >= FAST_CHANGE_ANGLE) {
+
+    alpha = SMOOTHING_FAST;
+
+  }
+
+  smoothedEstimatedAngle =
+    alpha * newAngle +
+    (1.0 - alpha) * smoothedEstimatedAngle;
+
+  smoothedEstimatedAngle = constrain(
+    smoothedEstimatedAngle,
+    0.0,
+    180.0
+  );
+
+  return smoothedEstimatedAngle;
+
+}
+
+
+// =====================================================
+// SERVO MOVEMENT
+// =====================================================
+
+void moveServoToDirection(float angle) {
+
+  int targetAngle =
+    180 - (int)(angle + 0.5);
+
+  targetAngle = constrain(
+    targetAngle,
+    SERVO_MIN_ANGLE,
+    SERVO_MAX_ANGLE
+  );
+
+  if (
+    abs(targetAngle - currentServoAngle) >=
+    MIN_ANGLE_CHANGE
+  ) {
+
+    directionServo.write(targetAngle);
+
+    currentServoAngle = targetAngle;
+
+  }
 
 }
 
@@ -557,17 +827,19 @@ bool estimateDirection(
 void startCalibration() {
 
   systemStarted = false;
+  systemPaused = false;
+  directionDetected = false;
 
   consecutiveDetections = 0;
 
   hasPreviousEstimate = false;
 
-  // LED STATUS DURING CALIBRATION
+  smoothedEstimatedAngle = 90;
+
+  lastStrongestMic = 0;
 
   digitalWrite(LED_SYSTEM, HIGH);
   digitalWrite(LED_DIRECTION, LOW);
-
-  // Keep servo at its existing physical position.
 
   Serial.println(
     "{\"event\":\"recalibration_started\"}"
@@ -598,8 +870,6 @@ void setup() {
 
   analogReadResolution(12);
 
-  // MICROPHONE SETUP
-
   for (int i = 0; i < 4; i++) {
 
     pinMode(micPins[i], INPUT);
@@ -611,16 +881,7 @@ void setup() {
 
   }
 
-  // BUTTON SETUP
-
-  pinMode(
-    BUTTON_PIN,
-    INPUT_PULLUP
-  );
-
-  resetButtonState();
-
-  // LED SETUP
+  pinMode(BUTTON_PIN, INPUT_PULLUP);
 
   pinMode(LED_SYSTEM, OUTPUT);
   pinMode(LED_DIRECTION, OUTPUT);
@@ -628,7 +889,7 @@ void setup() {
   digitalWrite(LED_SYSTEM, HIGH);
   digitalWrite(LED_DIRECTION, LOW);
 
-  // SERVO SETUP
+  resetButtonState();
 
   directionServo.setPeriodHertz(50);
 
@@ -640,15 +901,14 @@ void setup() {
 
   currentServoAngle = 90;
 
-  directionServo.write(currentServoAngle);
+  directionServo.write(90);
 
   delay(1000);
 
   Serial.println(
-    "{\"event\":\"system_ready\",\"message\":\"Automatic calibration starting\"}"
+    "{\"event\":\"system_ready\","
+    "\"message\":\"Automatic calibration starting\"}"
   );
-
-  // AUTOMATIC CALIBRATION ON POWER ON
 
   startCalibration();
 
@@ -661,11 +921,10 @@ void setup() {
 
 void loop() {
 
-  // -----------------------------------
-  // CHECK BUTTON
-  // -----------------------------------
-
   ButtonEvent event = checkButton();
+
+
+  // LONG PRESS = RECALIBRATION
 
   if (event == LONG_PRESS) {
 
@@ -679,28 +938,37 @@ void loop() {
 
   }
 
-  // -----------------------------------
-  // SYSTEM NOT STARTED
-  // -----------------------------------
 
-  if (!systemStarted) {
+  // SHORT PRESS = PAUSE / RESUME
+
+  if (event == SHORT_PRESS) {
+
+    togglePause();
+
+  }
+
+
+  if (systemPaused || !systemStarted) {
 
     delay(10);
-
     return;
 
   }
 
 
   // -----------------------------------
-  // LISTEN TO ALL FOUR MICROPHONES
+  // COLLECT SOUND WINDOWS
   // -----------------------------------
 
-  unsigned long totals[4] = {0, 0, 0, 0};
+  unsigned long totals[4] = {
+    0, 0, 0, 0
+  };
 
   unsigned long windows = 0;
 
   unsigned long listenStart = millis();
+
+  bool interrupted = false;
 
   while (millis() - listenStart < LISTEN_MS) {
 
@@ -716,8 +984,6 @@ void loop() {
 
     windows++;
 
-    // CHECK BUTTON DURING LISTENING
-
     event = checkButton();
 
     if (event == LONG_PRESS) {
@@ -732,14 +998,29 @@ void loop() {
 
     }
 
+    if (event == SHORT_PRESS) {
+
+      togglePause();
+
+      interrupted = true;
+      break;
+
+    }
+
+  }
+
+  if (interrupted || systemPaused) {
+    return;
   }
 
 
   // -----------------------------------
-  // CALCULATE AVERAGE ACTIVITY
+  // AVERAGE ACTIVITY
   // -----------------------------------
 
-  int average[4] = {0, 0, 0, 0};
+  int average[4] = {
+    0, 0, 0, 0
+  };
 
   for (int i = 0; i < 4; i++) {
 
@@ -756,45 +1037,63 @@ void loop() {
   // ESTIMATE DIRECTION
   // -----------------------------------
 
-  float estimatedAngle = 90.0;
+  float estimatedAngle = 90;
 
-  if (!estimateDirection(average, estimatedAngle)) {
+  float confidence = 0;
+
+  float strength[4] = {
+    0, 0, 0, 0
+  };
+
+
+  if (
+    !estimateDirection(
+      average,
+      estimatedAngle,
+      confidence,
+      strength
+    )
+  ) {
 
     consecutiveDetections = 0;
 
-    // No direction detected: Yellow OFF
+    directionDetected = false;
 
-    digitalWrite(LED_DIRECTION, LOW);
+    updateLEDs();
 
     emitTelemetry(
       "no_sound",
       average,
       false,
-      0.0
+      0,
+      strength
     );
 
     return;
 
   }
 
+
+  // -----------------------------------
+  // CONFIRM DETECTION
+  // -----------------------------------
+
   consecutiveDetections++;
 
+  if (
+    consecutiveDetections < REQUIRED_DETECTIONS
+  ) {
 
-  // -----------------------------------
-  // REQUIRE CONFIRMED DETECTION
-  // -----------------------------------
+    directionDetected = true;
 
-  if (consecutiveDetections < REQUIRED_DETECTIONS) {
-
-    // Sound direction is being confirmed.
-
-    digitalWrite(LED_DIRECTION, HIGH);
+    updateLEDs();
 
     emitTelemetry(
       "confirming",
       average,
       true,
-      estimatedAngle
+      estimatedAngle,
+      strength
     );
 
     return;
@@ -805,61 +1104,28 @@ void loop() {
 
 
   // -----------------------------------
-  // SMOOTH DIRECTION ESTIMATE
+  // SMOOTH ANGLE
   // -----------------------------------
 
-  if (!hasPreviousEstimate) {
-
-    smoothedEstimatedAngle = estimatedAngle;
-
-    hasPreviousEstimate = true;
-
-  }
-
-  else {
-
-    smoothedEstimatedAngle =
-
-      SMOOTHING_FACTOR * estimatedAngle +
-
-      (1.0 - SMOOTHING_FACTOR) *
-      smoothedEstimatedAngle;
-
-  }
-
-
-  // -----------------------------------
-  // SERVO MOVEMENT
-  // -----------------------------------
-
-  int targetAngle =
-    180 -
-    (int)(smoothedEstimatedAngle + 0.5);
-
-  targetAngle = constrain(
-    targetAngle,
-    SERVO_MIN_ANGLE,
-    SERVO_MAX_ANGLE
+  float finalAngle = smoothAngle(
+    estimatedAngle
   );
 
-  if (
-    abs(targetAngle - currentServoAngle) >=
-    MIN_ANGLE_CHANGE
-  ) {
 
-    directionServo.write(targetAngle);
+  // -----------------------------------
+  // SERVO
+  // -----------------------------------
 
-    currentServoAngle = targetAngle;
-
-  }
+  moveServoToDirection(finalAngle);
 
 
   // -----------------------------------
-  // DIRECTION DETECTED: YELLOW ON
+  // LEDS
   // -----------------------------------
 
-  digitalWrite(LED_SYSTEM, HIGH);
-  digitalWrite(LED_DIRECTION, HIGH);
+  directionDetected = true;
+
+  updateLEDs();
 
 
   // -----------------------------------
@@ -870,9 +1136,8 @@ void loop() {
     "detected",
     average,
     true,
-    smoothedEstimatedAngle
+    finalAngle,
+    strength
   );
-
-  delay(100);
 
 }
