@@ -64,8 +64,6 @@
     .panel-heading p { margin: 5px 0 0; color: var(--muted); font-size: 11px; }
     .live-tag { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .13em; }
     .live-tag::before { width: 6px; height: 6px; border-radius: 50%; background: var(--cyan); content: ""; }
-    .live-tag.paused { color: #ffd27b; }
-    .live-tag.paused::before { background: #ffd27b; }
     .live-tag.calibrating { color: var(--cyan); }
     .radar-wrap { position: relative; width: 100%; height: clamp(245px, 34vw, 335px); margin-top: 10px; }
     #radar { display: block; width: 100%; height: 100%; }
@@ -236,10 +234,6 @@
       </div>
       <div class="controls-content">
         <div class="control-item">
-          <span class="control-key">SHORT</span>
-          <div><div class="control-title">Pause or resume</div><div class="control-description">Tap the button to pause sound detection or resume listening. The servo holds its last position while paused.</div></div>
-        </div>
-        <div class="control-item">
           <span class="control-key">2 SEC</span>
           <div><div class="control-title">Recalibrate</div><div class="control-description">Press and hold for 2 seconds to recalibrate the microphones. Keep normal room noise during calibration.</div></div>
         </div>
@@ -395,7 +389,6 @@
 
     function setSystemState(text, state = "idle") {
       systemStateTag.textContent = text;
-      systemStateTag.classList.toggle("paused", state === "paused");
       systemStateTag.classList.toggle("calibrating", state === "calibrating");
     }
 
@@ -430,7 +423,7 @@
         updateButtonFeedback(
           progress,
           `Button held · ${Math.min(2, heldSeconds).toFixed(1)} / 2.0 s`,
-          progress >= 100 ? "Recalibration starting" : "Keep holding to recalibrate; release sooner to pause or resume",
+          progress >= 100 ? "Recalibration starting" : "Keep holding to recalibrate; release sooner to cancel",
           true
         );
         return;
@@ -442,11 +435,11 @@
         updateButtonFeedback(
           wasLongPress ? 100 : message.holdProgress,
           "Button released",
-          wasLongPress ? "Recalibration is in progress" : "Updating listening state",
+          wasLongPress ? "Recalibration is in progress" : "No action taken",
           false
         );
         buttonFeedbackTimer = window.setTimeout(() => {
-          updateButtonFeedback(0, "Waiting for a button press", "Tap to pause or resume; hold for 2 seconds to recalibrate", false);
+          updateButtonFeedback(0, "Waiting for a button press", "Hold for 2 seconds to recalibrate", false);
         }, 1800);
         return;
       }
@@ -486,17 +479,6 @@
         setDirectionStatus("Listening for sound");
         return;
       }
-      if (message.event === "paused" || message.event === "resumed") {
-        if (Number.isFinite(message.servoAngle)) {
-          document.getElementById("servoAngle").textContent = `${Math.round(message.servoAngle)}°`;
-        }
-        const paused = message.event === "paused";
-        setSystemState(paused ? "Paused" : "Listening", paused ? "paused" : "idle");
-        setDirectionStatus(paused ? "Detection paused · servo holding" : "Listening for sound");
-        document.getElementById("holdNote").textContent = paused ? "Servo holds its last position while paused" : "Waiting for the next sound";
-        return;
-      }
-
       if (Array.isArray(message.mics)) updateMicrophones(message.mics, message.thresholds);
       if (Number.isFinite(message.servoAngle)) {
         document.getElementById("servoAngle").textContent = `${Math.round(message.servoAngle)}°`;

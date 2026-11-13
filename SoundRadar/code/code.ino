@@ -79,7 +79,6 @@ bool longPressHandled = false;
 
 enum ButtonEvent {
   NO_EVENT,
-  SHORT_PRESS,
   LONG_PRESS
 };
 
@@ -87,7 +86,6 @@ enum ButtonEvent {
 // ---------------- SYSTEM STATE ----------------
 
 bool systemStarted = false;
-bool systemPaused = false;
 
 Servo directionServo;
 
@@ -119,16 +117,6 @@ void updateLEDs() {
     // Calibration / startup
     digitalWrite(LED_SYSTEM, HIGH);
     digitalWrite(LED_DIRECTION, LOW);
-
-    return;
-
-  }
-
-  if (systemPaused) {
-
-    // Paused: servo holds last direction
-    digitalWrite(LED_SYSTEM, LOW);
-    digitalWrite(LED_DIRECTION, HIGH);
 
     return;
 
@@ -220,7 +208,6 @@ void resetButtonState() {
 
 // =====================================================
 // BUTTON WITH DEBOUNCING
-// SHORT PRESS = PAUSE / RESUME
 // LONG PRESS = RECALIBRATE
 // =====================================================
 
@@ -273,12 +260,6 @@ ButtonEvent checkButton() {
           pressDuration,
           holdProgress
         );
-
-        if (!longPressHandled) {
-
-          return SHORT_PRESS;
-
-        }
 
       }
 
@@ -577,8 +558,6 @@ void startCalibration() {
 
   systemStarted = false;
 
-  systemPaused = false;
-
   consecutiveDetections = 0;
 
   hasPreviousEstimate = false;
@@ -605,51 +584,6 @@ void startCalibration() {
   Serial.println(
     "{\"event\":\"system_started\"}"
   );
-
-}
-
-
-// =====================================================
-// HANDLE BUTTON ACTIONS
-// =====================================================
-
-void handleShortPress() {
-
-  systemPaused = !systemPaused;
-
-  if (systemPaused) {
-
-    consecutiveDetections = 0;
-
-    // GREEN OFF, YELLOW ON
-
-    digitalWrite(LED_SYSTEM, LOW);
-    digitalWrite(LED_DIRECTION, HIGH);
-
-    Serial.printf(
-      "{\"event\":\"paused\",\"servoAngle\":%d}\n",
-      currentServoAngle
-    );
-
-  }
-
-  else {
-
-    consecutiveDetections = 0;
-
-    hasPreviousEstimate = false;
-
-    // GREEN ON, YELLOW OFF
-
-    digitalWrite(LED_SYSTEM, HIGH);
-    digitalWrite(LED_DIRECTION, LOW);
-
-    Serial.printf(
-      "{\"event\":\"resumed\",\"servoAngle\":%d}\n",
-      currentServoAngle
-    );
-
-  }
 
 }
 
@@ -745,29 +679,6 @@ void loop() {
 
   }
 
-  if (event == SHORT_PRESS) {
-
-    handleShortPress();
-
-  }
-
-
-  // -----------------------------------
-  // PAUSED STATE
-  // -----------------------------------
-
-  if (systemPaused) {
-
-    // Servo remains at its last position.
-    // Green OFF, Yellow ON.
-
-    delay(5);
-
-    return;
-
-  }
-
-
   // -----------------------------------
   // SYSTEM NOT STARTED
   // -----------------------------------
@@ -816,16 +727,6 @@ void loop() {
       );
 
       startCalibration();
-
-      return;
-
-    }
-
-    if (event == SHORT_PRESS) {
-
-      handleShortPress();
-
-      // Stop listening immediately.
 
       return;
 

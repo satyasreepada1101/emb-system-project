@@ -26,6 +26,6 @@ The radar uses the sketch's microphone direction mapping: Mic 1 at 0° (left), M
 
 ## Hardware button
 
-The push button is connected between GPIO 27 and GND (`INPUT_PULLUP`). A short press pauses or resumes detection; the servo holds its last position while paused. Press and hold for 2 seconds to recalibrate the microphone noise floor. While connected, the webpage shows the live button press and hold-to-recalibrate progress; button input is handled by the ESP32.
+The push button is connected between GPIO 27 and GND (`INPUT_PULLUP`). Its only action is recalibrating the microphone noise floor when held for 2 seconds; a shorter press does nothing. While connected, the webpage shows the live button press and hold-to-recalibrate progress; button input is handled by the ESP32.
 
 The browser serial chooser is provided by Chrome/Edge and requires the page to be served from localhost. Do not open `index.html` directly from the file system.
