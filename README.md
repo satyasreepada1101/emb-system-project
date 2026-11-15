@@ -12,7 +12,7 @@ The system:
 - Smooths the estimated direction to reduce sudden servo movements.
 - Rotates an SG90 servo toward the detected sound source.
 - Displays live direction, microphone levels, thresholds, signal strengths, and servo position on a browser dashboard.
-- Provides pause/resume and microphone recalibration through a hardware push button.
+- Provides microphone recalibration through a hardware push button.
 
 The method used is **amplitude-based localization**. It compares the relative sound intensity received by the microphones. It does not use TDOA (Time Difference of Arrival).
 
@@ -60,9 +60,9 @@ project-root/
 | ESP32-WROOM-32 | 1 | Microcontroller and ADC processing |
 | MAX9814 microphone module | 4 | Analog sound-level input |
 | SG90 servo motor | 1 | Physically points toward the estimated direction |
-| Push button | 1 | Pause/resume and recalibration control |
+| Push button | 1 | Recalibration control |
 | Green LED | 1 | System active indicator |
-| Yellow LED | 1 | Sound detected or paused indicator |
+| Yellow LED | 1 | Sound detected indicator |
 | Resistors, jumper wires, breadboard | As required | Circuit connections |
 | USB cable | 1 | Programming and serial communication |
 
@@ -251,15 +251,8 @@ The button is debounced using a 50 ms debounce interval.
 
 | Button action | System response |
 |---|---|
-| Short press | Pause or resume sound detection |
+| Short press | No action |
 | Hold for 2 seconds | Start microphone recalibration |
-
-When paused:
-
-- Sound processing stops.
-- The servo holds its last position.
-- The yellow LED remains on.
-- The dashboard displays the paused state.
 
 ### 5.9 LED indicators
 
@@ -267,7 +260,7 @@ When paused:
 |---|---|
 | Green LED | System is active or calibrating |
 | Yellow LED off | No sound direction currently detected |
-| Yellow LED on | Sound direction detected or system paused |
+| Yellow LED on | Sound direction detected |
 
 ---
 
@@ -299,7 +292,6 @@ The firmware sends values such as:
 {
   "event":"detected",
   "detected":true,
-  "paused":false,
   "strongestMic":2,
   "angle":74.5,
   "smoothedAngle":76.1,
@@ -326,8 +318,6 @@ Supported event types include:
 - `button_hold`
 - `button_released`
 - `button_long_press`
-- `system_paused`
-- `system_resumed`
 - `confirming`
 - `detected`
 - `no_sound`
@@ -349,7 +339,7 @@ It displays:
 - Calibrated thresholds and noise floors.
 - Normalized microphone signal strength.
 - Calibration progress.
-- Pause/resume/recalibration button feedback.
+- Recalibration button feedback.
 
 ### Dashboard features
 
@@ -449,7 +439,7 @@ For a classroom demonstration:
 5. Produce a sound in front and observe a direction near 90°.
 6. Produce a sound near the right side and observe a direction near 180°.
 7. Show that the servo moves toward the estimated source.
-8. Press the button briefly to pause and resume detection.
+8. Press the button briefly to confirm that no action is taken.
 9. Hold the button for two seconds to demonstrate recalibration.
 
 ---

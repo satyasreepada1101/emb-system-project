@@ -14,7 +14,6 @@
 // 6. Adaptive smoothing
 //
 // BUTTON:
-// SHORT PRESS = PAUSE / RESUME
 // LONG PRESS  = RECALIBRATE
 //
 // GREEN LED  = SYSTEM ACTIVE
@@ -109,7 +108,6 @@ bool longPressHandled = false;
 
 enum ButtonEvent {
   NO_EVENT,
-  SHORT_PRESS,
   LONG_PRESS
 };
 
@@ -117,7 +115,6 @@ enum ButtonEvent {
 // ---------------- SYSTEM STATE ----------------
 
 bool systemStarted = false;
-bool systemPaused = false;
 bool directionDetected = false;
 
 Servo directionServo;
@@ -156,7 +153,7 @@ void updateLEDs() {
 
   digitalWrite(
     LED_DIRECTION,
-    (systemPaused || directionDetected) ? HIGH : LOW
+    directionDetected ? HIGH : LOW
   );
 
 }
@@ -186,11 +183,10 @@ void emitTelemetry(
 
   Serial.printf(
     "{\"event\":\"%s\",\"detected\":%s,"
-    "\"paused\":%s,\"strongestMic\":%d,\"angle\":",
+    "\"strongestMic\":%d,\"angle\":",
 
     event,
     hasAngle ? "true" : "false",
-    systemPaused ? "true" : "false",
     lastStrongestMic
   );
 
@@ -291,15 +287,6 @@ ButtonEvent checkButton() {
           duration
         );
 
-        if (
-          !longPressHandled &&
-          duration < LONG_PRESS_MS
-        ) {
-
-          event = SHORT_PRESS;
-
-        }
-
       }
 
     }
@@ -344,37 +331,6 @@ ButtonEvent checkButton() {
   }
 
   return event;
-
-}
-
-
-// =====================================================
-// PAUSE / RESUME
-// =====================================================
-
-void togglePause() {
-
-  systemPaused = !systemPaused;
-
-  directionDetected = systemPaused;
-
-  consecutiveDetections = 0;
-
-  if (systemPaused) {
-
-    Serial.println(
-      "{\"event\":\"system_paused\"}"
-    );
-
-  } else {
-
-    Serial.println(
-      "{\"event\":\"system_resumed\"}"
-    );
-
-  }
-
-  updateLEDs();
 
 }
 
@@ -827,7 +783,6 @@ void moveServoToDirection(float angle) {
 void startCalibration() {
 
   systemStarted = false;
-  systemPaused = false;
   directionDetected = false;
 
   consecutiveDetections = 0;
@@ -939,16 +894,7 @@ void loop() {
   }
 
 
-  // SHORT PRESS = PAUSE / RESUME
-
-  if (event == SHORT_PRESS) {
-
-    togglePause();
-
-  }
-
-
-  if (systemPaused || !systemStarted) {
+  if (!systemStarted) {
 
     delay(10);
     return;
@@ -967,8 +913,6 @@ void loop() {
   unsigned long windows = 0;
 
   unsigned long listenStart = millis();
-
-  bool interrupted = false;
 
   while (millis() - listenStart < LISTEN_MS) {
 
@@ -998,21 +942,7 @@ void loop() {
 
     }
 
-    if (event == SHORT_PRESS) {
-
-      togglePause();
-
-      interrupted = true;
-      break;
-
-    }
-
   }
-
-  if (interrupted || systemPaused) {
-    return;
-  }
-
 
   // -----------------------------------
   // AVERAGE ACTIVITY

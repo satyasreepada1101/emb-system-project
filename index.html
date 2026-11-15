@@ -538,7 +538,7 @@
         updateButtonFeedback(
           wasLongPress ? 100 : message.holdProgress,
           "Button released",
-          wasLongPress ? "Recalibration is in progress" : "Pause/resume command received",
+          wasLongPress ? "Recalibration is in progress" : "Short press ignored",
           false
         );
         buttonFeedbackTimer = window.setTimeout(() => {
@@ -549,16 +549,6 @@
       if (message.event === "system_ready") {
         setSystemState("Starting");
         setDirectionStatus("Starting automatic calibration");
-        return;
-      }
-      if (message.event === "system_paused" || message.event === "system_resumed") {
-        const paused = message.event === "system_paused";
-        setSystemState(paused ? "Paused" : "Listening");
-        setDirectionStatus(paused ? "Paused · servo holding" : "Listening for sound", paused);
-        document.getElementById("holdNote").textContent = paused
-          ? "Detection paused; servo holds its position"
-          : "Waiting for the next sound";
-        updateButtonFeedback(0, paused ? "Detection paused" : "Detection resumed", paused ? "Short press to resume listening" : "Short press pauses detection · hold 2 seconds to recalibrate", false);
         return;
       }
       if (message.event === "calibration_started" || message.event === "recalibration_started" || message.event === "button_long_press") {
@@ -603,7 +593,7 @@
       }
 
       if (message.event === "detected" || message.event === "confirming") {
-        setSystemState(message.paused ? "Paused" : "Listening");
+        setSystemState("Listening");
         const bearing = Number(message.angle);
         if (Number.isFinite(bearing)) {
           lastAngle = Math.max(0, Math.min(180, bearing));
@@ -611,15 +601,15 @@
           drawRadar();
         }
         if (message.event === "confirming") {
-          setDirectionStatus(message.paused ? "Paused" : "Confirming sound direction");
+          setDirectionStatus("Confirming sound direction");
           document.getElementById("holdNote").textContent = "Confirming a new sound";
         } else {
-          setDirectionStatus(message.paused ? "Paused · last direction held" : "Sound detected", !message.paused);
+          setDirectionStatus("Sound detected", true);
           document.getElementById("holdNote").textContent = `Bearing held at ${lastAngle.toFixed(1)}° between detections`;
         }
       } else if (message.event === "no_sound") {
-        setSystemState(message.paused ? "Paused" : "Listening");
-        setDirectionStatus(message.paused ? "Paused · servo holding" : "No qualifying sound");
+        setSystemState("Listening");
+        setDirectionStatus("No qualifying sound");
         document.getElementById("holdNote").textContent = lastAngle === null ? "Waiting for the first sound" : `Last bearing held at ${lastAngle.toFixed(1)}°`;
       }
     }
