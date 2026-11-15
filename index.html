@@ -3,21 +3,32 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#07111d">
-  <title>Sound Radar</title>
+  <meta name="theme-color" content="#101d2b">
+  <title>Real-Time Acoustic Source Localization and Direction Tracking Using a Microcontroller-Based Microphone Array</title>
   <style>
     :root {
       color-scheme: dark;
       font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      background: #07111d;
-      color: #e7f2f5;
+      background: #101d2b;
+      color: #edf6f7;
       font-synthesis: none;
       text-rendering: optimizeLegibility;
-      --muted: #8499a8;
-      --line: rgba(136, 177, 191, .16);
-      --cyan: #49e1d0;
-      --lime: #c9f36b;
-      --panel: rgba(13, 28, 42, .88);
+      --muted: #9aafb9;
+      --line: rgba(159, 193, 202, .2);
+      --cyan: #62e5d8;
+      --lime: #d4f47a;
+      --panel: rgba(25, 43, 59, .95);
+    }
+
+    :root[data-theme="light"] {
+      color-scheme: light;
+      background: #eef4f6;
+      color: #172b36;
+      --muted: #5f737d;
+      --line: rgba(54, 91, 104, .18);
+      --cyan: #087f83;
+      --lime: #5b9200;
+      --panel: rgba(255, 255, 255, .94);
     }
 
     * { box-sizing: border-box; }
@@ -27,8 +38,14 @@
       min-height: 100vh;
       margin: 0;
       background:
-        radial-gradient(ellipse at 50% -18%, rgba(32, 113, 127, .24), transparent 54%),
-        #07111d;
+        radial-gradient(ellipse at 50% -18%, rgba(47, 133, 145, .3), transparent 54%),
+        #101d2b;
+    }
+
+    :root[data-theme="light"] body {
+      background:
+        radial-gradient(ellipse at 50% -18%, rgba(73, 177, 184, .18), transparent 54%),
+        #eef4f6;
     }
 
     button { font: inherit; }
@@ -53,8 +70,19 @@
       transition: transform .15s, background .15s;
     }
     .button:hover:not(:disabled) { transform: translateY(-1px); background: #6df1e3; }
-    .button.secondary { color: #c1d0d5; border-color: var(--line); background: #142534; }
+    .button.secondary { color: #d1e1e4; border-color: var(--line); background: #243c50; }
     .button:disabled { opacity: .48; cursor: not-allowed; }
+    .theme-button {
+      min-height: 39px;
+      padding: 0 12px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      color: var(--muted);
+      background: rgba(127, 161, 172, .1);
+      font-size: 12px;
+      cursor: pointer;
+    }
+    .theme-button:hover { color: var(--cyan); border-color: var(--cyan); }
 
     .grid { display: grid; grid-template-columns: minmax(0, 1.65fr) minmax(260px, .85fr); gap: 17px; align-items: stretch; }
     .panel { border: 1px solid var(--line); border-radius: 17px; background: var(--panel); box-shadow: 0 18px 55px rgba(0, 0, 0, .13); }
@@ -68,7 +96,7 @@
     .radar-wrap { position: relative; width: 100%; height: clamp(245px, 34vw, 335px); margin-top: 10px; }
     #radar { display: block; width: 100%; height: 100%; }
     .radar-center { position: absolute; bottom: 1px; left: 50%; width: 30px; height: 30px; transform: translateX(-50%); }
-    .radar-center::before { position: absolute; inset: 5px; border: 1px solid rgba(73, 225, 208, .7); border-radius: 50%; background: #0c202a; content: ""; }
+    .radar-center::before { position: absolute; inset: 5px; border: 1px solid rgba(73, 225, 208, .7); border-radius: 50%; background: #183544; content: ""; }
     .radar-center::after { position: absolute; inset: 11px; border-radius: 50%; background: var(--cyan); box-shadow: 0 0 15px var(--cyan); content: ""; }
     .bearing-caption { display: flex; justify-content: space-between; padding: 0 5px; color: #718996; font-size: 10px; }
     .radar-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 15px; padding-top: 14px; border-top: 1px solid var(--line); }
@@ -93,18 +121,18 @@
     .mic-topline { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 7px; font-size: 10px; }
     .mic-name { color: #cfdbdf; }
     .mic-value { color: var(--muted); font-variant-numeric: tabular-nums; }
-    .meter { position: relative; height: 5px; overflow: hidden; border-radius: 8px; background: #1d3442; }
+    .meter { position: relative; height: 5px; overflow: hidden; border-radius: 8px; background: #2a4658; }
     .meter-fill { width: 0; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #39bfae, #c9f36b); transition: width .22s ease; }
     .threshold { position: absolute; top: -1px; bottom: -1px; left: 0; width: 1px; background: #e8f4ed; opacity: .8; }
     .meter-caption { display: flex; justify-content: space-between; margin-top: 5px; color: #6f8793; font-size: 9px; }
     .calibration {
       display: flex; align-items: center; gap: 14px; margin-top: 17px; padding: 12px 14px;
-      border: 1px solid var(--line); border-radius: 12px; background: rgba(13, 28, 42, .72);
+      border: 1px solid var(--line); border-radius: 12px; background: rgba(25, 43, 59, .86);
     }
     .calibration-copy { flex: 1; min-width: 0; }
     .calibration-title { color: #c8d8dc; font-size: 10px; font-weight: 650; }
     .calibration-subtitle { margin-top: 4px; color: var(--muted); font-size: 9px; }
-    .progress-track { width: 78px; height: 4px; overflow: hidden; border-radius: 5px; background: #203743; }
+    .progress-track { width: 78px; height: 4px; overflow: hidden; border-radius: 5px; background: #2b4857; }
     .progress-fill { width: 0; height: 100%; background: var(--cyan); transition: width .25s; }
     .calibration-percent { width: 29px; color: var(--cyan); font-size: 10px; text-align: right; font-variant-numeric: tabular-nums; }
     .hint { margin: 17px 2px 0; color: #81939d; font-size: 11px; line-height: 1.6; }
@@ -112,24 +140,96 @@
     .error { display: none; margin-top: 12px; color: #ff9a8f; font-size: 11px; line-height: 1.5; }
     .error.visible { display: block; }
     .controls-panel { margin-top: 17px; padding: 18px 21px; }
-    .controls-content { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin-top: 15px; }
-    .button-feedback { display: flex; align-items: center; gap: 13px; margin-top: 15px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 11px; background: rgba(13, 28, 42, .55); }
+    .button-feedback { display: flex; align-items: center; gap: 13px; margin-top: 15px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 11px; background: rgba(25, 43, 59, .7); }
     .button-feedback.pressed { border-color: rgba(73, 225, 208, .42); background: rgba(73, 225, 208, .06); }
     .button-indicator { width: 10px; height: 10px; flex: 0 0 10px; border: 1px solid #718894; border-radius: 50%; background: #344a55; }
     .button-feedback.pressed .button-indicator { border-color: var(--lime); background: var(--lime); box-shadow: 0 0 12px rgba(201, 243, 107, .75); }
     .button-feedback-copy { flex: 1; min-width: 0; }
     .button-feedback-title { color: #cfdbdf; font-size: 11px; font-weight: 650; }
     .button-feedback-subtitle { margin-top: 4px; color: var(--muted); font-size: 10px; }
-    .button-progress-track { width: min(190px, 30%); height: 5px; overflow: hidden; border-radius: 5px; background: #203743; }
+    .button-progress-track { width: min(190px, 30%); height: 5px; overflow: hidden; border-radius: 5px; background: #2b4857; }
     .button-progress-fill { width: 0; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--cyan), var(--lime)); transition: width .1s linear; }
     .button-progress-label { width: 41px; color: var(--cyan); font-size: 10px; text-align: right; font-variant-numeric: tabular-nums; }
-    .control-item { display: flex; align-items: flex-start; gap: 11px; padding: 12px; border: 1px solid var(--line); border-radius: 11px; background: rgba(13, 28, 42, .55); }
-    .control-key { display: grid; flex: 0 0 35px; height: 35px; place-items: center; border: 1px solid rgba(73, 225, 208, .22); border-radius: 9px; color: var(--cyan); background: rgba(73, 225, 208, .07); font-size: 10px; font-weight: 750; }
-    .control-title { color: #cfdbdf; font-size: 11px; font-weight: 650; }
-    .control-description { margin-top: 4px; color: var(--muted); font-size: 10px; line-height: 1.5; }
+
+    /* Presentation layout: keep the complete dashboard visible in one frame. */
+    html, body { height: 100%; overflow: hidden; }
+    .shell {
+      width: min(1540px, calc(100% - 24px));
+      height: 100vh;
+      min-height: 520px;
+      padding: 14px 0 12px;
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr) auto auto;
+      gap: 9px;
+    }
+    .topbar { margin-bottom: 0; }
+    .topbar h1 { max-width: min(680px, 55vw); font-size: clamp(14px, 1.7vw, 22px); line-height: 1.15; }
+    .brand-mark { width: 36px; height: 36px; border-radius: 11px; }
+    .brand-mark svg { width: 20px; height: 20px; }
+    .grid { min-height: 0; gap: 10px; }
+    .radar-panel { padding: 14px 17px 12px; display: flex; flex-direction: column; min-height: 0; }
+    .radar-wrap { flex: 1; min-height: 150px; height: auto; margin-top: 4px; }
+    .radar-foot { margin-top: 7px; padding-top: 8px; }
+    .side { min-height: 0; gap: 10px; }
+    .direction-panel { padding: 13px 15px; }
+    .angle-row { margin: 4px 0 2px; }
+    .angle-value { font-size: clamp(38px, 5vw, 54px); }
+    .panel-heading h2 { font-size: 15px; }
+    .panel-heading p { font-size: 12px; }
+    .direction-status { font-size: 12px; }
+    .readout-divider { margin: 10px 0; }
+    .readout-row,
+    .readout-row strong { font-size: 12px; }
+    .readout-row + .readout-row { margin-top: 8px; }
+    .mics-panel { min-height: 0; padding: 13px 15px 11px; }
+    .mic-list { gap: 7px; margin-top: 9px; }
+    .mic-topline { margin-bottom: 4px; font-size: 12px; }
+    .mic-value { font-size: 12px; }
+    .meter-caption { margin-top: 3px; font-size: 10px; }
+    .calibration { margin-top: 9px; padding: 8px 10px; gap: 9px; }
+    .calibration-title { font-size: 12px; }
+    .calibration-subtitle { font-size: 10px; }
+    .controls-panel { margin-top: 0; padding: 10px 15px; }
+    .button-feedback { margin-top: 8px; padding: 7px 10px; }
+    .button-feedback-title { font-size: 12px; }
+    .button-feedback-subtitle { font-size: 11px; }
+    .button-progress-label { font-size: 11px; }
+    .hint { margin: 0 2px; font-size: 10px; line-height: 1.3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    :root[data-theme="light"] .meter { background: #d8e4e7; }
+    :root[data-theme="light"] .calibration,
+    :root[data-theme="light"] .button-feedback,
+    :root[data-theme="light"] .panel { box-shadow: 0 12px 35px rgba(42, 77, 88, .09); }
+    :root[data-theme="light"] .radar-center::before { background: #e6f2f2; }
+    :root[data-theme="light"] .button { color: #ffffff; background: #087f83; }
+    :root[data-theme="light"] .button:hover:not(:disabled) { background: #0b999d; }
+    :root[data-theme="light"] .button.secondary {
+      color: #31515b;
+      background: #e1ecef;
+      border-color: #b7cbd0;
+    }
+    :root[data-theme="light"] .theme-button {
+      color: #31515b;
+      background: #ffffff;
+      border-color: #b7cbd0;
+    }
+    :root[data-theme="light"] .readout-row strong { color: #24424d; }
+    :root[data-theme="light"] .mic-name,
+    :root[data-theme="light"] .button-feedback-title { color: #294752; }
+    :root[data-theme="light"] .calibration-title { color: #31515b; }
+    :root[data-theme="light"] .button-feedback,
+    :root[data-theme="light"] .calibration { background: rgba(239, 247, 248, .9); }
+    :root[data-theme="light"] .button-progress-track,
+    :root[data-theme="light"] .progress-track { background: #cbdde1; }
+    :root[data-theme="light"] .meter-caption,
+    :root[data-theme="light"] .bearing-caption,
+    :root[data-theme="light"] .hold-note { color: #617b84; }
+    :root[data-theme="light"] .hint { color: #5d747d; }
+    :root[data-theme="light"] .hint strong { color: #31515b; }
 
     @media (max-width: 760px) {
       .shell { width: min(100% - 24px, 550px); padding-top: 22px; }
+      html, body { overflow: auto; }
+      .shell { height: auto; min-height: 100vh; grid-template-rows: none; }
       .grid { grid-template-columns: 1fr; }
       .side { grid-template-columns: 1fr 1fr; grid-template-rows: auto; }
       .radar-wrap { height: clamp(235px, 63vw, 310px); }
@@ -137,7 +237,6 @@
       .mic-list { gap: 11px; margin-top: 14px; }
       .calibration { gap: 8px; padding: 10px; }
       .progress-track { width: 48px; }
-      .controls-content { grid-template-columns: 1fr; gap: 8px; }
       .controls-panel { padding: 17px; }
       .button-feedback { gap: 9px; padding: 10px; }
       .button-progress-track { width: 22%; }
@@ -165,11 +264,12 @@
         </div>
         <div>
           <div class="eyebrow">ESP32 · 4 microphone array</div>
-          <h1>Sound Radar</h1>
+          <h1>Real-Time Acoustic Source Localization and Direction Tracking Using a Microcontroller-Based Microphone Array</h1>
         </div>
       </div>
       <div class="connection">
         <div class="connection-state"><span id="connectionLed" class="led"></span><span id="connectionText">Not connected</span></div>
+        <button id="themeButton" class="theme-button" type="button" aria-label="Switch to light mode">☀ Light</button>
         <button id="connectButton" class="button" type="button">Connect device</button>
       </div>
     </header>
@@ -203,7 +303,7 @@
 
         <section class="panel mics-panel" aria-label="Microphone activity levels">
           <div class="panel-heading">
-            <div><h2>Microphone levels</h2><p>Peak-to-peak activity · calibrated threshold</p></div>
+            <div><h2>Microphone levels</h2><p>Activity · threshold · normalized signal strength</p></div>
           </div>
           <div id="micList" class="mic-list"></div>
           <div class="calibration">
@@ -232,16 +332,6 @@
         <div class="button-progress-track" aria-hidden="true"><div id="buttonProgressFill" class="button-progress-fill"></div></div>
         <div id="buttonProgressLabel" class="button-progress-label">0 / 2 s</div>
       </div>
-      <div class="controls-content">
-        <div class="control-item">
-          <span class="control-key">2 SEC</span>
-          <div><div class="control-title">Recalibrate</div><div class="control-description">Press and hold for 2 seconds to recalibrate the microphones. Keep normal room noise during calibration.</div></div>
-        </div>
-        <div class="control-item">
-          <span class="control-key">GPIO 27</span>
-          <div><div class="control-title">Button wiring</div><div class="control-description">The sketch uses INPUT_PULLUP: connect the push button between GPIO 27 and GND.</div></div>
-        </div>
-      </div>
     </section>
 
     <p class="hint"><strong>To connect:</strong> use Chrome or Edge, close Arduino Serial Monitor, then select the ESP32 serial port. The sketch maps Mic 1 to 0° (left), Mic 2 to 60°, Mic 3 to 120°, and Mic 4 to 180° (right).</p>
@@ -252,7 +342,7 @@
     const micList = document.getElementById("micList");
     const micRows = micNames.map((name, index) => {
       const row = document.createElement("div");
-      row.innerHTML = `<div class="mic-topline"><span class="mic-name">${name}</span><span class="mic-value" id="micValue${index}">--</span></div><div class="meter"><div class="meter-fill" id="micFill${index}"></div><span class="threshold" id="micThreshold${index}"></span></div><div class="meter-caption"><span>Activity</span><span id="micThresholdLabel${index}">Threshold --</span></div>`;
+      row.innerHTML = `<div class="mic-topline"><span class="mic-name">${name}</span><span class="mic-value" id="micValue${index}">--</span></div><div class="meter"><div class="meter-fill" id="micFill${index}"></div><span class="threshold" id="micThreshold${index}"></span></div><div class="meter-caption"><span id="micStrengthLabel${index}">Signal --</span><span id="micThresholdLabel${index}">Threshold --</span></div>`;
       micList.append(row);
       return row;
     });
@@ -262,6 +352,7 @@
     const connectButton = document.getElementById("connectButton");
     const connectionLed = document.getElementById("connectionLed");
     const connectionText = document.getElementById("connectionText");
+    const themeButton = document.getElementById("themeButton");
     const errorMessage = document.getElementById("errorMessage");
     const systemStateTag = document.getElementById("systemStateTag");
     const buttonFeedback = document.getElementById("buttonFeedback");
@@ -271,6 +362,14 @@
     let activeReader = null;
     let lastAngle = null;
     let isConnected = false;
+
+    function setTheme(theme) {
+      const light = theme === "light";
+      document.documentElement.dataset.theme = light ? "light" : "dark";
+      themeButton.textContent = light ? "☾ Dark" : "☀ Light";
+      themeButton.setAttribute("aria-label", light ? "Switch to dark mode" : "Switch to light mode");
+      window.localStorage.setItem("soundRadarTheme", light ? "light" : "dark");
+    }
 
     function drawRadar() {
       const bounds = canvas.getBoundingClientRect();
@@ -366,15 +465,19 @@
       connectButton.disabled = !("serial" in navigator);
     }
 
-    function updateMicrophones(mics, thresholds) {
+    function updateMicrophones(mics, thresholds, strengths, noiseFloor) {
       if (!Array.isArray(mics) || mics.length !== 4) return;
       const validThresholds = Array.isArray(thresholds) && thresholds.length === 4 ? thresholds : [0, 0, 0, 0];
+      const validStrengths = Array.isArray(strengths) && strengths.length === 4 ? strengths : [0, 0, 0, 0];
+      const validNoise = Array.isArray(noiseFloor) && noiseFloor.length === 4 ? noiseFloor : [0, 0, 0, 0];
       const maximum = Math.max(500, ...mics, ...validThresholds);
       micRows.forEach((row, index) => {
         const activity = Number(mics[index]) || 0;
         const threshold = Number(validThresholds[index]) || 0;
+        const strength = Number(validStrengths[index]) || 0;
         document.getElementById(`micValue${index}`).textContent = Math.round(activity);
-        document.getElementById(`micThresholdLabel${index}`).textContent = `Threshold ${Math.round(threshold)}`;
+        document.getElementById(`micStrengthLabel${index}`).textContent = `Signal ${Math.round(strength)}`;
+        document.getElementById(`micThresholdLabel${index}`).textContent = `Limit ${Math.round(threshold)} · Noise ${Math.round(Number(validNoise[index]) || 0)}`;
         document.getElementById(`micFill${index}`).style.width = `${Math.min(100, activity / maximum * 100)}%`;
         document.getElementById(`micThreshold${index}`).style.left = `${Math.min(100, threshold / maximum * 100)}%`;
       });
@@ -435,7 +538,7 @@
         updateButtonFeedback(
           wasLongPress ? 100 : message.holdProgress,
           "Button released",
-          wasLongPress ? "Recalibration is in progress" : "No action taken",
+          wasLongPress ? "Recalibration is in progress" : "Pause/resume command received",
           false
         );
         buttonFeedbackTimer = window.setTimeout(() => {
@@ -446,6 +549,16 @@
       if (message.event === "system_ready") {
         setSystemState("Starting");
         setDirectionStatus("Starting automatic calibration");
+        return;
+      }
+      if (message.event === "system_paused" || message.event === "system_resumed") {
+        const paused = message.event === "system_paused";
+        setSystemState(paused ? "Paused" : "Listening");
+        setDirectionStatus(paused ? "Paused · servo holding" : "Listening for sound", paused);
+        document.getElementById("holdNote").textContent = paused
+          ? "Detection paused; servo holds its position"
+          : "Waiting for the next sound";
+        updateButtonFeedback(0, paused ? "Detection paused" : "Detection resumed", paused ? "Short press to resume listening" : "Short press pauses detection · hold 2 seconds to recalibrate", false);
         return;
       }
       if (message.event === "calibration_started" || message.event === "recalibration_started" || message.event === "button_long_press") {
@@ -479,7 +592,7 @@
         setDirectionStatus("Listening for sound");
         return;
       }
-      if (Array.isArray(message.mics)) updateMicrophones(message.mics, message.thresholds);
+      if (Array.isArray(message.mics)) updateMicrophones(message.mics, message.thresholds, message.strength, message.noiseFloor);
       if (Number.isFinite(message.servoAngle)) {
         document.getElementById("servoAngle").textContent = `${Math.round(message.servoAngle)}°`;
       }
@@ -490,7 +603,7 @@
       }
 
       if (message.event === "detected" || message.event === "confirming") {
-        setSystemState("Listening");
+        setSystemState(message.paused ? "Paused" : "Listening");
         const bearing = Number(message.angle);
         if (Number.isFinite(bearing)) {
           lastAngle = Math.max(0, Math.min(180, bearing));
@@ -498,15 +611,15 @@
           drawRadar();
         }
         if (message.event === "confirming") {
-          setDirectionStatus("Confirming sound direction");
+          setDirectionStatus(message.paused ? "Paused" : "Confirming sound direction");
           document.getElementById("holdNote").textContent = "Confirming a new sound";
         } else {
-          setDirectionStatus("Sound detected", true);
+          setDirectionStatus(message.paused ? "Paused · last direction held" : "Sound detected", !message.paused);
           document.getElementById("holdNote").textContent = `Bearing held at ${lastAngle.toFixed(1)}° between detections`;
         }
       } else if (message.event === "no_sound") {
-        setSystemState("Listening");
-        setDirectionStatus("No qualifying sound");
+        setSystemState(message.paused ? "Paused" : "Listening");
+        setDirectionStatus(message.paused ? "Paused · servo holding" : "No qualifying sound");
         document.getElementById("holdNote").textContent = lastAngle === null ? "Waiting for the first sound" : `Last bearing held at ${lastAngle.toFixed(1)}°`;
       }
     }
@@ -578,7 +691,11 @@
     }
 
     connectButton.addEventListener("click", connectDevice);
+    themeButton.addEventListener("click", () => {
+      setTheme(document.documentElement.dataset.theme === "light" ? "dark" : "light");
+    });
     window.addEventListener("resize", drawRadar);
+    setTheme(window.localStorage.getItem("soundRadarTheme") || "dark");
     if (!("serial" in navigator)) {
       connectButton.disabled = true;
       showError("Web Serial requires Chrome or Edge. Open this page at http://localhost:8000.");

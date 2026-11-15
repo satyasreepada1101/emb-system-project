@@ -1,0 +1,13 @@
+# Legacy local-only ESP32 sketch
+/esp32*
+
+# Arduino build and IDE files
+build/
+*.hex
+*.elf
+*.map
+.vscode/
+
+# Python cache
+__pycache__/
+*.py[cod]
