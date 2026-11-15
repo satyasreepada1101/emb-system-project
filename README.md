@@ -454,7 +454,27 @@ For a classroom demonstration:
 
 ---
 
-## 11. Design Choices and Advantages
+## 11. GitHub Pages Deployment
+
+The dashboard can be hosted using GitHub Pages instead of running `server.py`.
+The repository includes a GitHub Actions workflow that publishes the root
+`index.html` whenever changes are pushed to `main`.
+
+To enable it:
+
+1. Open the repository on GitHub.
+2. Go to **Settings → Pages**.
+3. Set the source to **GitHub Actions**.
+4. Push to `main` or manually run the **Deploy SoundRadar to GitHub Pages** workflow.
+5. Open the generated HTTPS Pages URL in Microsoft Edge or Google Chrome.
+
+Connect the ESP32 to the same laptop that is running the browser. The hosted
+page communicates directly with the USB serial device using the Web Serial API,
+so `server.py` is not required when using GitHub Pages.
+
+---
+
+## 12. Design Choices and Advantages
 
 - **Individual calibration:** Compensates for different microphone noise levels.
 - **Median noise estimation:** Reduces the effect of occasional disturbances.
@@ -468,7 +488,7 @@ For a classroom demonstration:
 
 ---
 
-## 12. Limitations and Future Improvements
+## 13. Limitations and Future Improvements
 
 ### Current limitations
 
@@ -491,7 +511,7 @@ For a classroom demonstration:
 
 ---
 
-## 13. Summary
+## 14. Summary
 
 This project demonstrates a complete embedded acoustic direction-tracking system. The ESP32 performs real-time analog acquisition, calibration, signal processing, direction estimation, smoothing, and servo control. The Python server provides a local browser environment, while the dashboard presents the live system state in a clear visual form.
 
