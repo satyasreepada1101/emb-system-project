@@ -447,16 +447,16 @@ For a classroom demonstration:
 ## 11. GitHub Pages Deployment
 
 The dashboard can be hosted using GitHub Pages instead of running `server.py`.
-The repository includes a GitHub Actions workflow that publishes the root
-`index.html` whenever changes are pushed to `main`.
+The root `index.html` is published directly from the `main` branch.
 
 To enable it:
 
 1. Open the repository on GitHub.
 2. Go to **Settings → Pages**.
-3. Set the source to **GitHub Actions**.
-4. Push to `main` or manually run the **Deploy SoundRadar to GitHub Pages** workflow.
-5. Open the generated HTTPS Pages URL in Microsoft Edge or Google Chrome.
+3. Set the source to **Deploy from a branch**.
+4. Select the `main` branch and the `/ (root)` folder.
+5. Save the settings and wait for GitHub Pages to build the site.
+6. Open the generated HTTPS Pages URL in Microsoft Edge or Google Chrome.
 
 Connect the ESP32 to the same laptop that is running the browser. The hosted
 page communicates directly with the USB serial device using the Web Serial API,
