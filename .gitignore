@@ -1,5 +1,6 @@
 # Legacy local-only ESP32 sketch
 /esp32*
+/server.py
 
 # Arduino build and IDE files
 build/
